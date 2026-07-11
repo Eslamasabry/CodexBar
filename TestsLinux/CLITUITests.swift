@@ -58,7 +58,7 @@ struct CLITUITests {
             showsHelp: false,
             isRefreshing: false)
 
-        #expect(output.contains("all providers"))
+        #expect(output.contains("CodexBar / Usage limits"))
         #expect(output.contains("Codex"))
         #expect(output.contains("Claude"))
         #expect(output.contains("Cursor"))
@@ -77,6 +77,12 @@ struct CLITUITests {
             isRefreshing: false)
 
         #expect(output.contains("Capacity cue:"))
+        #expect(output.contains("● ample (70%+)"))
+        #expect(output.contains("┌"))
+        #expect(output.contains("["))
+        #expect(output.contains(">"))
+        #expect(output.contains("reset in 2h"))
+        #expect(output.contains("source: oauth"))
         #expect(output.contains("Session"))
         #expect(output.contains("Weekly"))
         #expect(output.contains("Cursor"))

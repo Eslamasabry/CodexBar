@@ -311,7 +311,7 @@ enum CLITUIRenderer {
             selectedLine: grid.selectedLine,
             width: width,
             height: bodyHeight)
-        return (prefix + visibleGrid + ["", self.controls]).joined(separator: "\n")
+        return (prefix + visibleGrid + ["", self.centered(self.controls, width: width)]).joined(separator: "\n")
     }
 
     private static func renderDetail(
@@ -335,48 +335,27 @@ enum CLITUIRenderer {
             "",
             visible.joined(separator: "\n"),
             "",
-            self.detailControls + (scrollHint.isEmpty ? "" : " • \(scrollHint)"),
+            self.centered(
+                self.detailControls + (scrollHint.isEmpty ? "" : " • \(scrollHint)"),
+                width: width),
         ]
             .joined(separator: "\n")
     }
 
     private static func header(state: CLITUIState, width: Int, isRefreshing: Bool, useColor: Bool) -> String {
-        let scope = state.focusedProvider.map(\.rawValue) ?? "all providers"
-        let activity = isRefreshing ? "refreshing" : "live"
-        let left = "CodexBar / Usage limits"
-        let right = "\(scope) • \(activity)"
-        return self.paired(left, right, width: width)
+        let activity = isRefreshing ? "  " + self.paint("refreshing", code: "36", enabled: useColor) : ""
+        return self.fit("CodexBar / Usage limits", width: width) + activity
     }
 
     private static func capacityCue(state: CLITUIState, width: Int, useColor: Bool) -> String {
-        let cards = state.visibleIndices.compactMap { index -> CLICardModel? in
-            let tile = state.tiles[index]
-            return tile.isStale ? nil : tile.card
-        }
-        let entries = cards.compactMap { card -> (card: CLICardModel, remaining: Double, metric: CLICardMetric)? in
-            guard let metric = card.metrics.min(by: { $0.remainingPercent < $1.remainingPercent }) else { return nil }
-            return (card, metric.remainingPercent, metric)
-        }
-        guard !entries.isEmpty else {
-            return "Capacity cue: no fresh quota snapshot yet"
-        }
-
-        let strongest = entries.max(by: { $0.remaining < $1.remaining })!
-        let lowest = entries.min(by: { $0.remaining < $1.remaining })!
-        let reset = cards.flatMap { card in
-            card.metrics.compactMap { metric -> (CLICardModel, CLICardMetric)? in
-                metric.resetAt == nil ? nil : (card, metric)
-            }
-        }.min(by: { ($0.1.resetAt ?? .distantFuture) < ($1.1.resetAt ?? .distantFuture) })
-
-        var parts = [
-            "Headroom: \(strongest.card.title) \(self.percent(strongest.remaining))",
-            "lowest: \(lowest.card.title) \(lowest.metric.label) \(self.percent(lowest.remaining))",
-        ]
-        if let reset, let resetText = reset.1.resetText {
-            parts.append("next reset: \(reset.0.title) \(self.resetLabel(resetText))")
-        }
-        return self.fit("Capacity cue: " + parts.joined(separator: " • "), width: width)
+        let legend = self.fit(
+            "Capacity cue: ● ample (70%+)   ● moderate (30–70%)   ● low (<30%)",
+            width: width)
+        guard useColor else { return legend }
+        return legend
+            .replacingOccurrences(of: "● ample", with: self.paint("● ample", code: "32", enabled: true))
+            .replacingOccurrences(of: "● moderate", with: self.paint("● moderate", code: "33", enabled: true))
+            .replacingOccurrences(of: "● low", with: self.paint("● low", code: "31", enabled: true))
     }
 
     private static func renderGrid(
@@ -450,19 +429,18 @@ enum CLITUIRenderer {
         useColor: Bool,
         detail: Bool) -> [String]
     {
-        let innerWidth = max(18, width - 4)
+        let innerWidth = max(16, width - 6)
         let borderCode = selected ? "36" : "2"
         let top = self.paint(
-            "╭" + String(repeating: "─", count: innerWidth + 2) + "╮",
+            "┌" + String(repeating: "─", count: innerWidth + 4) + "┐",
             code: borderCode,
             enabled: useColor)
         let bottom = self.paint(
-            "╰" + String(repeating: "─", count: innerWidth + 2) + "╯",
+            "└" + String(repeating: "─", count: innerWidth + 4) + "┘",
             code: borderCode,
             enabled: useColor)
         var lines = [top]
-        let marker = selected ? "●" : " "
-        let title = "\(marker) \(tile.title)"
+        let title = selected && !useColor ? "> \(tile.title)" : tile.title
         let plan = tile.card?.planBadge ?? ""
         lines.append(self.side(
             self.paired(title, plan, width: innerWidth),
@@ -483,15 +461,21 @@ enum CLITUIRenderer {
 
         if let card = tile.card {
             for metric in card.metrics {
-                let right = [self.percent(metric.remainingPercent), metric.resetText.map(self.resetLabel)]
+                let percent = self.percent(metric.remainingPercent)
+                let right = [percent, metric.resetText.map(self.resetDisplay)]
                     .compactMap(\.self)
                     .joined(separator: "  ")
-                lines.append(self.side(
+                let metricLine = self.side(
                     self.paired(metric.label, right, width: innerWidth),
                     innerWidth: innerWidth,
                     borderCode: borderCode,
-                    useColor: useColor,
-                    metric: metric.remainingPercent))
+                    useColor: useColor)
+                lines.append(metricLine.replacingOccurrences(
+                    of: percent,
+                    with: self.paint(
+                        percent,
+                        code: self.metricCode(metric.remainingPercent),
+                        enabled: useColor)))
                 lines.append(self.side(
                     "",
                     innerWidth: innerWidth,
@@ -501,8 +485,7 @@ enum CLITUIRenderer {
                     self.bar(remaining: metric.remainingPercent, width: max(6, innerWidth - 2)),
                     innerWidth: innerWidth,
                     borderCode: borderCode,
-                    useColor: useColor,
-                    metric: metric.remainingPercent))
+                    useColor: useColor))
                 lines.append(self.side(
                     "",
                     innerWidth: innerWidth,
@@ -528,7 +511,7 @@ enum CLITUIRenderer {
                     dim: true))
             }
             lines.append(self.side(
-                self.paired(card.sourceLabel, self.freshness(card.updatedAt), width: innerWidth),
+                self.paired("source: \(card.sourceLabel)", self.freshness(card.updatedAt), width: innerWidth),
                 innerWidth: innerWidth,
                 borderCode: borderCode,
                 useColor: useColor,
@@ -574,8 +557,9 @@ enum CLITUIRenderer {
             "\(marker) \(card.title) [\(card.sourceLabel)] • \(self.freshness(card.updatedAt))",
             width: width)
         let metrics = card.metrics.map { metric in
-            self.fit(
-                "  \(metric.label): \(self.percent(metric.remainingPercent)) \(metric.resetText.map(self.resetLabel) ?? "")",
+            let reset = metric.resetText.map(self.resetDisplay) ?? ""
+            return self.fit(
+                "  \(metric.label): \(self.percent(metric.remainingPercent)) \(reset)",
                 width: width)
         }
         return [header] + metrics
@@ -594,7 +578,7 @@ enum CLITUIRenderer {
         let lowerPadding = missing - upperPadding
         let empty = self.side(
             "",
-            innerWidth: max(18, width - 4),
+            innerWidth: max(16, width - 6),
             borderCode: selected ? "36" : "2",
             useColor: useColor)
         return [top]
@@ -625,20 +609,17 @@ enum CLITUIRenderer {
         innerWidth: Int,
         borderCode: String,
         useColor: Bool,
-        dim: Bool = false,
-        metric: Double? = nil) -> String
+        dim: Bool = false) -> String
     {
         let clipped = self.fit(content, width: innerWidth)
         let padding = String(repeating: " ", count: max(0, innerWidth - self.visibleLength(clipped)))
-        let body: String = if let metric {
-            self.paint(clipped, code: self.metricCode(metric), enabled: useColor)
-        } else if dim {
+        let body: String = if dim {
             self.paint(clipped, code: "2", enabled: useColor)
         } else {
             clipped
         }
         let border = self.paint("│", code: borderCode, enabled: useColor)
-        return "\(border) \(body)\(padding) \(border)"
+        return "\(border)  \(body)\(padding)  \(border)"
     }
 
     private static func paired(_ left: String, _ right: String, width: Int) -> String {
@@ -664,7 +645,17 @@ enum CLITUIRenderer {
 
     private static func bar(remaining: Double, width: Int) -> String {
         let filled = Int((max(0, min(100, remaining)) / 100 * Double(width)).rounded())
-        return "[" + String(repeating: "━", count: filled) + String(repeating: "─", count: max(0, width - filled)) + "]"
+        if filled <= 0 {
+            return "[" + String(repeating: "-", count: width) + "]"
+        }
+        if filled >= width {
+            return "[" + String(repeating: "=", count: width) + "]"
+        }
+        return "["
+            + String(repeating: "=", count: max(0, filled - 1))
+            + ">"
+            + String(repeating: "-", count: max(0, width - filled))
+            + "]"
     }
 
     private static func percent(_ value: Double) -> String {
@@ -680,14 +671,22 @@ enum CLITUIRenderer {
             .replacingOccurrences(of: "Resets ", with: "")
     }
 
+    private static func resetDisplay(_ text: String) -> String {
+        let label = self.resetLabel(text)
+        if label.lowercased().contains("unlimited") {
+            return "no reset"
+        }
+        return "reset in \(label)"
+    }
+
     private static func freshness(_ date: Date?) -> String {
-        guard let date else { return "updated unknown" }
+        guard let date else { return "updated: unknown" }
         let seconds = max(0, Int(Date().timeIntervalSince(date)))
         return switch seconds {
-        case 0..<10: "updated now"
-        case 10..<60: "updated \(seconds)s"
-        case 60..<3600: "updated \(seconds / 60)m"
-        default: "updated \(seconds / 3600)h"
+        case 0..<10: "updated: now"
+        case 10..<60: "updated: \(seconds)s"
+        case 60..<3600: "updated: \(seconds / 60)m"
+        default: "updated: \(seconds / 3600)h"
         }
     }
 
@@ -736,13 +735,14 @@ enum CLITUIRenderer {
 
     private static func metricCode(_ remaining: Double) -> String {
         switch remaining {
-        case ..<20: "31"
-        case ..<50: "33"
+        case ..<30: "31"
+        case ..<70: "33"
         default: "32"
         }
     }
 
-    private static let controls = "arrows: grid • j/k: next/previous • Enter: detail • f: focus • r: refresh • ?: help • q: quit"
+    private static let controls = "arrows: grid • j/k: next/previous • Enter: detail • f: focus • "
+        + "r: refresh • ?: help • q: quit"
     private static let detailControls = "Esc: grid • j/k: previous/next provider • ↑/↓: scroll • r: refresh • q: quit"
     private static let helpText = [
         "Keyboard shortcuts",
