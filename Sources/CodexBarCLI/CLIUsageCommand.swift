@@ -715,6 +715,15 @@ extension CodexBarCLI {
         {
             return false
         }
+        if provider == .minimax,
+           sourceMode == .auto,
+           environment.map({ ProviderTokenResolver.minimaxToken(environment: $0) != nil }) == true
+        {
+            // A configured MiniMax API/Coding Plan token has a Linux-capable API
+            // strategy. Do not reject auto mode merely because the descriptor also
+            // exposes the optional macOS browser path.
+            return false
+        }
         if provider == .mimo,
            sourceMode == .auto,
            let environment,
