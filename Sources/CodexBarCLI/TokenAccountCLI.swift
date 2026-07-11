@@ -434,7 +434,9 @@ struct TokenAccountCLIContext {
 
         if base == .auto {
             if routing.adminAPIKey != nil { return .api }
-            if routing.isOAuth || self.hasClaudeEnvironmentOAuthToken { return .oauth }
+            if routing.isOAuth || self.hasClaudeEnvironmentOAuthToken || self.hasAvailableClaudeOAuthCredentials {
+                return .oauth
+            }
             return base
         }
 
@@ -471,6 +473,13 @@ struct TokenAccountCLIContext {
             return false
         }
         return !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private var hasAvailableClaudeOAuthCredentials: Bool {
+        ClaudeOAuthPlanningAvailability.isAvailable(
+            runtime: .cli,
+            sourceMode: .oauth,
+            environment: self.baseEnvironment)
     }
 
     private func codexAccountReconciler(activeSource: CodexActiveSource? = nil) -> DefaultCodexAccountReconciler {
