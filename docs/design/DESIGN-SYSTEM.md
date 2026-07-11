@@ -45,8 +45,10 @@ service health have different truth sources and meanings.
 
 ### Hierarchy and layout
 
-- **Overview first, detail on demand.** Show all providers as compact comparable rows/cards; selecting one expands its
-  full lanes and supporting data without changing the selected account or hiding peers.
+- **Overview first, detail on demand.** The TUI home view is an adaptive bento grid: show every selected
+  provider/account and every authentic quota lane it reports, then open a focused detail view without changing the
+  selected account or hiding peers. Failures belong in the same grid position as the provider, not in a detached
+  footer.
 - **Stable geometry.** Refreshes update values in place. Do not reorder cards, move controls, or replace rows with
   spinners while a request is active.
 - **Dense but breathable.** Use a 4-point spacing rhythm: 4 within a datum, 8 within a metric group, 12 between groups,

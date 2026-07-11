@@ -12,6 +12,10 @@ import Foundation
 enum CLITUIAction: Equatable {
     case previous
     case next
+    case up
+    case down
+    case enter
+    case back
     case refresh
     case toggleProviderFocus
     case toggleHelp
@@ -21,68 +25,149 @@ enum CLITUIAction: Equatable {
 
 enum CLITUIKeyDecoder {
     static func action(firstByte: UInt8, escapeBytes: [UInt8] = []) -> CLITUIAction {
-        switch firstByte {
-        case 3, 113:
-            return .quit
-        case 106:
-            return .next
-        case 107:
-            return .previous
-        case 114:
-            return .refresh
-        case 102:
-            return .toggleProviderFocus
-        case 63:
-            return .toggleHelp
-        case 27:
-            guard escapeBytes.count == 2, escapeBytes[0] == 91 else { return .quit }
+        if firstByte == 27 {
+            guard escapeBytes.count == 2, escapeBytes[0] == 91 else { return .back }
             return switch escapeBytes[1] {
-            case 65: .previous
-            case 66: .next
+            case 65: .up
+            case 66: .down
+            case 67: .next
+            case 68: .previous
             default: .none
             }
+        }
+        return switch firstByte {
+        case 3, 113:
+            .quit
+        case 10, 13:
+            .enter
+        case 106:
+            .next
+        case 107:
+            .previous
+        case 114:
+            .refresh
+        case 102:
+            .toggleProviderFocus
+        case 63:
+            .toggleHelp
         default:
-            return .none
+            .none
         }
     }
 }
 
-struct CLITUIState {
-    private(set) var cards: [CLICardModel]
-    private(set) var failures: [CLICardFailure]
-    private(set) var exitCode: ExitCode
-    private(set) var selectedIndex: Int = 0
-    private(set) var focusedProvider: UsageProvider?
+enum CLITUIScreen: Equatable {
+    case overview
+    case detail
+}
 
-    init(dashboard: CLICardsDashboard) {
-        self.cards = dashboard.cards
-        self.failures = dashboard.failures
-        self.exitCode = dashboard.exitCode
-        self.selectedIndex = 0
-    }
+enum CLITUITile: Equatable {
+    case card(CLICardModel)
+    case stale(CLICardModel, CLICardFailure)
+    case failure(CLICardFailure)
 
-    var visibleIndices: [Int] {
-        self.cards.indices.filter { index in
-            guard let focusedProvider else { return true }
-            return self.cards[index].provider == focusedProvider
+    var provider: UsageProvider {
+        switch self {
+        case let .card(card), let .stale(card, _): card.provider
+        case let .failure(failure): failure.provider
         }
     }
 
+    var card: CLICardModel? {
+        switch self {
+        case let .card(card), let .stale(card, _): card
+        case .failure: nil
+        }
+    }
+
+    var failure: CLICardFailure? {
+        switch self {
+        case .card: nil
+        case let .stale(_, failure), let .failure(failure): failure
+        }
+    }
+
+    var title: String {
+        self.card?.title
+            ?? ProviderDescriptorRegistry.descriptor(for: self.provider).metadata.displayName
+    }
+
+    var accountLine: String? {
+        self.card?.accountLine ?? self.failure?.accountLabel
+    }
+
+    var identity: (UsageProvider, String, String?) {
+        (self.provider, self.title, self.accountLine)
+    }
+
+    var isStale: Bool {
+        if case .stale = self { return true }
+        return false
+    }
+}
+
+struct CLITUIState {
+    private(set) var tiles: [CLITUITile]
+    private(set) var exitCode: ExitCode
+    private(set) var selectedIndex: Int = 0
+    private(set) var focusedProvider: UsageProvider?
+    private(set) var screen: CLITUIScreen = .overview
+    private(set) var detailScrollOffset: Int = 0
+
+    init(dashboard: CLICardsDashboard) {
+        self.tiles = Self.makeTiles(from: dashboard, previous: [])
+        self.exitCode = dashboard.exitCode
+    }
+
+    var visibleIndices: [Int] {
+        self.tiles.indices.filter { index in
+            guard let focusedProvider else { return true }
+            return self.tiles[index].provider == focusedProvider
+        }
+    }
+
+    var selectedTile: CLITUITile? {
+        guard self.tiles.indices.contains(self.selectedIndex) else { return nil }
+        return self.tiles[self.selectedIndex]
+    }
+
     var selectedCard: CLICardModel? {
-        guard self.cards.indices.contains(self.selectedIndex) else { return nil }
-        return self.cards[self.selectedIndex]
+        self.selectedTile?.card
     }
 
     var selectedPosition: Int? {
         self.visibleIndices.firstIndex(of: self.selectedIndex)
     }
 
-    mutating func apply(_ action: CLITUIAction) -> Bool {
+    mutating func apply(_ action: CLITUIAction, columns: Int = 1) -> Bool {
         switch action {
         case .previous:
             self.moveSelection(by: -1)
         case .next:
             self.moveSelection(by: 1)
+        case .up:
+            if self.screen == .detail {
+                self.detailScrollOffset = max(0, self.detailScrollOffset - 1)
+            } else {
+                self.moveGrid(by: -1, columns: columns)
+            }
+        case .down:
+            if self.screen == .detail {
+                self.detailScrollOffset += 1
+            } else {
+                self.moveGrid(by: 1, columns: columns)
+            }
+        case .enter:
+            guard self.selectedTile != nil else { return false }
+            self.screen = .detail
+            self.detailScrollOffset = 0
+        case .back:
+            if self.screen == .detail {
+                self.screen = .overview
+                self.detailScrollOffset = 0
+            } else {
+                return true
+            }
         case .toggleProviderFocus:
             self.toggleProviderFocus()
         case .quit:
@@ -94,27 +179,57 @@ struct CLITUIState {
     }
 
     mutating func replaceDashboard(_ dashboard: CLICardsDashboard) {
-        let selectedIdentity = self.selectedCard.map { ($0.provider, $0.title, $0.accountLine) }
-        self.cards = dashboard.cards
-        self.failures = dashboard.failures
+        let selectedIdentity = self.selectedTile?.identity
+        self.tiles = Self.makeTiles(from: dashboard, previous: self.tiles)
         self.exitCode = dashboard.exitCode
 
         if let selectedIdentity,
-           let index = self.cards.firstIndex(where: {
-               $0.provider == selectedIdentity.0
-                   && $0.title == selectedIdentity.1
-                   && $0.accountLine == selectedIdentity.2
-           })
+           let index = self.tiles.firstIndex(where: { $0.identity == selectedIdentity })
         {
             self.selectedIndex = index
         } else {
-            self.selectedIndex = min(self.selectedIndex, max(0, self.cards.count - 1))
+            self.selectedIndex = min(self.selectedIndex, max(0, self.tiles.count - 1))
         }
 
-        if let focusedProvider, !self.cards.contains(where: { $0.provider == focusedProvider }) {
+        if let focusedProvider, !self.tiles.contains(where: { $0.provider == focusedProvider }) {
             self.focusedProvider = nil
         }
         self.ensureVisibleSelection()
+    }
+
+    private static func makeTiles(from dashboard: CLICardsDashboard, previous: [CLITUITile]) -> [CLITUITile] {
+        let previousCards = Dictionary(grouping: previous.compactMap(\.card), by: \.provider)
+        let cardsByProvider = Dictionary(grouping: dashboard.cards, by: \.provider)
+        let failuresByProvider = Dictionary(grouping: dashboard.failures, by: \.provider)
+        var providerOrder = dashboard.providerOrder
+        for provider in dashboard.cards.map(\.provider) + dashboard.failures.map(\.provider)
+            where !providerOrder.contains(provider)
+        {
+            providerOrder.append(provider)
+        }
+
+        var tiles: [CLITUITile] = []
+        for provider in providerOrder {
+            let cards = cardsByProvider[provider] ?? []
+            let failures = failuresByProvider[provider] ?? []
+            if !cards.isEmpty {
+                tiles.append(contentsOf: cards.map(CLITUITile.card))
+                tiles.append(contentsOf: failures.map(CLITUITile.failure))
+                continue
+            }
+            guard !failures.isEmpty else { continue }
+            var retained = previousCards[provider] ?? []
+            for failure in failures {
+                if let index = retained.firstIndex(where: {
+                    failure.accountLabel == nil || $0.accountLine == failure.accountLabel
+                }) {
+                    tiles.append(.stale(retained.remove(at: index), failure))
+                } else {
+                    tiles.append(.failure(failure))
+                }
+            }
+        }
+        return tiles
     }
 
     private mutating func moveSelection(by delta: Int) {
@@ -123,14 +238,26 @@ struct CLITUIState {
         let currentPosition = visibleIndices.firstIndex(of: self.selectedIndex) ?? 0
         let nextPosition = (currentPosition + delta + visibleIndices.count) % visibleIndices.count
         self.selectedIndex = visibleIndices[nextPosition]
+        self.detailScrollOffset = 0
+    }
+
+    private mutating func moveGrid(by rowDelta: Int, columns: Int) {
+        let visibleIndices = self.visibleIndices
+        guard !visibleIndices.isEmpty else { return }
+        let currentPosition = visibleIndices.firstIndex(of: self.selectedIndex) ?? 0
+        let step = max(1, columns)
+        let proposed = currentPosition + rowDelta * step
+        guard visibleIndices.indices.contains(proposed) else { return }
+        self.selectedIndex = visibleIndices[proposed]
+        self.detailScrollOffset = 0
     }
 
     private mutating func toggleProviderFocus() {
-        guard let selectedCard else {
+        guard let selectedTile else {
             self.focusedProvider = nil
             return
         }
-        self.focusedProvider = self.focusedProvider == selectedCard.provider ? nil : selectedCard.provider
+        self.focusedProvider = self.focusedProvider == selectedTile.provider ? nil : selectedTile.provider
         self.ensureVisibleSelection()
     }
 
@@ -142,76 +269,431 @@ struct CLITUIState {
 }
 
 enum CLITUIRenderer {
+    private static let tileGap = 2
+
+    static func columnCount(terminalWidth: Int) -> Int {
+        switch terminalWidth {
+        case 140...: 3
+        case 92...: 2
+        default: 1
+        }
+    }
+
     static func render(
         state: CLITUIState,
         terminalWidth: Int,
+        terminalHeight: Int = 24,
         showsHelp: Bool,
-        isRefreshing: Bool) -> String
+        isRefreshing: Bool,
+        useColor: Bool = false) -> String
     {
         let width = max(36, terminalWidth)
-        let header = self.header(state: state, isRefreshing: isRefreshing)
+        let height = max(12, terminalHeight)
+        let header = self.header(state: state, width: width, isRefreshing: isRefreshing, useColor: useColor)
         if showsHelp {
-            return [header, "", self.helpText].joined(separator: "\n")
+            return self.viewport(
+                lines: [header, "", self.helpText],
+                selectedLine: nil,
+                width: width,
+                height: height)
+                .joined(separator: "\n")
+        }
+        if state.screen == .detail {
+            return self.renderDetail(state: state, width: width, height: height, useColor: useColor)
         }
 
-        var lines = [header, "", self.overview(state: state, width: width)]
-        guard let card = state.selectedCard else {
-            if !state.failures.isEmpty {
-                lines.append(self.safe(CLICardsRenderer.renderFailuresOnly(state.failures, useColor: false)))
+        let capacity = self.capacityCue(state: state, width: width, useColor: useColor)
+        let grid = self.renderGrid(state: state, width: width, useColor: useColor)
+        let prefix = [header, capacity, ""]
+        let bodyHeight = max(8, height - prefix.count - 2)
+        let visibleGrid = self.viewport(
+            lines: grid.lines,
+            selectedLine: grid.selectedLine,
+            width: width,
+            height: bodyHeight)
+        return (prefix + visibleGrid + ["", self.controls]).joined(separator: "\n")
+    }
+
+    private static func renderDetail(
+        state: CLITUIState,
+        width: Int,
+        height: Int,
+        useColor: Bool) -> String
+    {
+        let heading = self.fit("CodexBar / Provider detail", width: width)
+        guard let tile = state.selectedTile else {
+            return [heading, "", "No provider detail is available.", "", self.detailControls]
+                .joined(separator: "\n")
+        }
+        let detail = self.renderTile(tile, selected: true, width: width, useColor: useColor, detail: true)
+        let bodyHeight = max(6, height - 4)
+        let offset = min(state.detailScrollOffset, max(0, detail.count - bodyHeight))
+        let visible = Array(detail.dropFirst(offset).prefix(bodyHeight))
+        let scrollHint = detail.count > bodyHeight ? "↑/↓ scroll" : ""
+        return [
+            heading,
+            "",
+            visible.joined(separator: "\n"),
+            "",
+            self.detailControls + (scrollHint.isEmpty ? "" : " • \(scrollHint)"),
+        ]
+            .joined(separator: "\n")
+    }
+
+    private static func header(state: CLITUIState, width: Int, isRefreshing: Bool, useColor: Bool) -> String {
+        let scope = state.focusedProvider.map(\.rawValue) ?? "all providers"
+        let activity = isRefreshing ? "refreshing" : "live"
+        let left = "CodexBar / Usage limits"
+        let right = "\(scope) • \(activity)"
+        return self.paired(left, right, width: width)
+    }
+
+    private static func capacityCue(state: CLITUIState, width: Int, useColor: Bool) -> String {
+        let cards = state.visibleIndices.compactMap { index -> CLICardModel? in
+            let tile = state.tiles[index]
+            return tile.isStale ? nil : tile.card
+        }
+        let entries = cards.compactMap { card -> (card: CLICardModel, remaining: Double, metric: CLICardMetric)? in
+            guard let metric = card.metrics.min(by: { $0.remainingPercent < $1.remainingPercent }) else { return nil }
+            return (card, metric.remainingPercent, metric)
+        }
+        guard !entries.isEmpty else {
+            return "Capacity cue: no fresh quota snapshot yet"
+        }
+
+        let strongest = entries.max(by: { $0.remaining < $1.remaining })!
+        let lowest = entries.min(by: { $0.remaining < $1.remaining })!
+        let reset = cards.flatMap { card in
+            card.metrics.compactMap { metric -> (CLICardModel, CLICardMetric)? in
+                metric.resetAt == nil ? nil : (card, metric)
             }
-            lines.append("")
-            lines.append(self.controls)
-            return lines.joined(separator: "\n")
-        }
+        }.min(by: { ($0.1.resetAt ?? .distantFuture) < ($1.1.resetAt ?? .distantFuture) })
 
-        let selection = state.selectedPosition.map { "\($0 + 1)/\(state.visibleIndices.count)" } ?? "0/0"
-        lines.append("")
-        lines.append("Selected \(selection)")
-        lines.append(contentsOf: CLICardsRenderer.renderCard(card, width: width, useColor: false).map(self.safe))
-        if !state.failures.isEmpty {
-            lines.append("")
-            lines.append(self.safe(CLICardsRenderer.renderFailuresOnly(state.failures, useColor: false)))
+        var parts = [
+            "Headroom: \(strongest.card.title) \(self.percent(strongest.remaining))",
+            "lowest: \(lowest.card.title) \(lowest.metric.label) \(self.percent(lowest.remaining))",
+        ]
+        if let reset, let resetText = reset.1.resetText {
+            parts.append("next reset: \(reset.0.title) \(self.resetLabel(resetText))")
         }
-        lines.append("")
-        lines.append(self.controls)
-        return lines.joined(separator: "\n")
+        return self.fit("Capacity cue: " + parts.joined(separator: " • "), width: width)
     }
 
-    private static func header(state: CLITUIState, isRefreshing: Bool) -> String {
-        let scope = state.focusedProvider.map { " • \($0.rawValue)" } ?? " • all providers"
-        let refresh = isRefreshing ? " • refreshing" : ""
-        return "CodexBar Usage TUI\(scope)\(refresh)"
-    }
-
-    private static func overview(state: CLITUIState, width: Int) -> String {
+    private static func renderGrid(
+        state: CLITUIState,
+        width: Int,
+        useColor: Bool) -> (lines: [String], selectedLine: Int?)
+    {
         let indices = state.visibleIndices
         guard !indices.isEmpty else {
-            return "No provider snapshots are available. Refresh after configuring a supported local source."
+            return (["No provider snapshots are available. Configure a supported local source, then refresh."], nil)
         }
-        let rows = indices.map { index in
-            self.overviewRow(card: state.cards[index], selected: index == state.selectedIndex, width: width)
+        if width < 56 {
+            let lines = indices.flatMap { index in
+                self.renderCompactTile(
+                    state.tiles[index],
+                    selected: index == state.selectedIndex,
+                    width: width,
+                    useColor: useColor)
+            }
+            let selectedLine = indices.firstIndex(of: state.selectedIndex).map { $0 * 2 }
+            return (lines, selectedLine)
         }
-        return (["Provider overview"] + rows).joined(separator: "\n")
+
+        let columns = self.columnCount(terminalWidth: width)
+        let tileWidth = max(30, (width - (columns - 1) * self.tileGap) / columns)
+        var lines: [String] = []
+        var selectedLine: Int?
+        for rowStart in stride(from: 0, to: indices.count, by: columns) {
+            let rowIndices = Array(indices[rowStart..<min(rowStart + columns, indices.count)])
+            let renderedTiles = rowIndices.map { index in
+                (
+                    index,
+                    self.renderTile(
+                        state.tiles[index],
+                        selected: index == state.selectedIndex,
+                        width: tileWidth,
+                        useColor: useColor,
+                        detail: false))
+            }
+            if rowIndices.contains(state.selectedIndex) {
+                selectedLine = lines.count
+            }
+            let rowHeight = renderedTiles.map(\.1.count).max() ?? 0
+            let tiles = renderedTiles.map { index, tileLines in
+                self.verticallyCenteredTile(
+                    tileLines,
+                    targetHeight: rowHeight,
+                    width: tileWidth,
+                    selected: index == state.selectedIndex,
+                    useColor: useColor)
+            }
+            let occupiedWidth = rowIndices.count * tileWidth + (rowIndices.count - 1) * self.tileGap
+            let leadingSpace = String(repeating: " ", count: max(0, (width - occupiedWidth) / 2))
+            for lineIndex in 0..<rowHeight {
+                let parts = tiles.map { tileLines in
+                    lineIndex < tileLines.count ? self.pad(tileLines[lineIndex], width: tileWidth) : String(
+                        repeating: " ",
+                        count: tileWidth)
+                }
+                lines.append(leadingSpace + parts.joined(separator: String(repeating: " ", count: self.tileGap)))
+            }
+            if rowStart + columns < indices.count { lines.append("") }
+        }
+        return (lines, selectedLine)
     }
 
-    private static func overviewRow(card: CLICardModel, selected: Bool, width: Int) -> String {
-        let marker = selected ? ">" : " "
-        let metric: String = if let firstMetric = card.metrics.first {
-            "\(firstMetric.label) \(Int(firstMetric.remainingPercent.rounded()))% left"
-        } else if let firstInfo = card.infoLines.first {
-            firstInfo
-        } else {
-            "Limits unavailable"
+    private static func renderTile(
+        _ tile: CLITUITile,
+        selected: Bool,
+        width: Int,
+        useColor: Bool,
+        detail: Bool) -> [String]
+    {
+        let innerWidth = max(18, width - 4)
+        let borderCode = selected ? "36" : "2"
+        let top = self.paint(
+            "╭" + String(repeating: "─", count: innerWidth + 2) + "╮",
+            code: borderCode,
+            enabled: useColor)
+        let bottom = self.paint(
+            "╰" + String(repeating: "─", count: innerWidth + 2) + "╯",
+            code: borderCode,
+            enabled: useColor)
+        var lines = [top]
+        let marker = selected ? "●" : " "
+        let plan = tile.card?.planBadge.map { " · \($0)" } ?? ""
+        lines.append(self.side(
+            "\(marker) \(tile.title)\(plan)",
+            innerWidth: innerWidth,
+            borderCode: borderCode,
+            useColor: useColor))
+
+        if let account = tile.accountLine, !account.isEmpty {
+            let normalizedAccount = account.hasPrefix("@") ? String(account.dropFirst())
+                .trimmingCharacters(in: .whitespaces) : account
+            lines.append(self.side(
+                "@ \(normalizedAccount)",
+                innerWidth: innerWidth,
+                borderCode: borderCode,
+                useColor: useColor,
+                dim: true))
         }
-        let account = card.accountLine.map { " \($0)" } ?? ""
-        let raw = "\(marker) \(card.title) [\(card.sourceLabel)]\(account) — \(metric)"
-        return self.fit(raw, width: width)
+
+        if let card = tile.card {
+            for metric in card.metrics {
+                let reset = metric.resetText.map { "  \(self.resetLabel($0))" } ?? ""
+                let label = "\(metric.label)  \(self.percent(metric.remainingPercent))\(reset)"
+                lines.append(self.side(
+                    label,
+                    innerWidth: innerWidth,
+                    borderCode: borderCode,
+                    useColor: useColor,
+                    metric: metric.remainingPercent))
+                lines.append(self.side(
+                    self.bar(remaining: metric.remainingPercent, width: max(6, innerWidth - 2)),
+                    innerWidth: innerWidth,
+                    borderCode: borderCode,
+                    useColor: useColor,
+                    metric: metric.remainingPercent))
+                if detail, let detailText = metric.detailText {
+                    lines.append(self.side(
+                        detailText,
+                        innerWidth: innerWidth,
+                        borderCode: borderCode,
+                        useColor: useColor,
+                        dim: true))
+                }
+            }
+
+            let support = card.infoLines + card.extraLines + (card.statusLine.map { [$0] } ?? [])
+            for line in support {
+                lines.append(self.side(
+                    line,
+                    innerWidth: innerWidth,
+                    borderCode: borderCode,
+                    useColor: useColor,
+                    dim: true))
+            }
+            let source = "\(card.sourceLabel) • \(self.freshness(card.updatedAt))"
+            lines.append(self.side(
+                source,
+                innerWidth: innerWidth,
+                borderCode: borderCode,
+                useColor: useColor,
+                dim: true))
+        }
+
+        if let failure = tile.failure {
+            let label = tile.isStale ? "STALE" : "ACTION NEEDED"
+            lines.append(self.side(label, innerWidth: innerWidth, borderCode: "31", useColor: useColor, dim: false))
+            lines.append(contentsOf: self.wrapped(failure.message, width: innerWidth).map {
+                self.side($0, innerWidth: innerWidth, borderCode: "31", useColor: useColor, dim: true)
+            })
+            if detail {
+                lines.append(self.side(
+                    "Run: codexbar diagnose --provider \(failure.provider.rawValue) --redact",
+                    innerWidth: innerWidth,
+                    borderCode: "31",
+                    useColor: useColor,
+                    dim: true))
+            }
+        }
+
+        if tile.card == nil, tile.failure == nil {
+            lines.append(self.side(
+                "No quota data is available.",
+                innerWidth: innerWidth,
+                borderCode: borderCode,
+                useColor: useColor,
+                dim: true))
+        }
+        lines.append(bottom)
+        return lines
+    }
+
+    private static func renderCompactTile(_ tile: CLITUITile, selected: Bool, width: Int, useColor: Bool) -> [String] {
+        let marker = selected ? ">" : " "
+        guard let card = tile.card else {
+            return [self.fit(
+                "\(marker) \(tile.title): action needed — \(tile.failure?.message ?? "unavailable")",
+                width: width)]
+        }
+        let header = self.fit(
+            "\(marker) \(card.title) [\(card.sourceLabel)] • \(self.freshness(card.updatedAt))",
+            width: width)
+        let metrics = card.metrics.map { metric in
+            self.fit(
+                "  \(metric.label): \(self.percent(metric.remainingPercent)) \(metric.resetText.map(self.resetLabel) ?? "")",
+                width: width)
+        }
+        return [header] + metrics
+    }
+
+    private static func verticallyCenteredTile(
+        _ lines: [String],
+        targetHeight: Int,
+        width: Int,
+        selected: Bool,
+        useColor: Bool) -> [String]
+    {
+        guard targetHeight > lines.count, let top = lines.first, let bottom = lines.last else { return lines }
+        let missing = targetHeight - lines.count
+        let upperPadding = missing / 2
+        let lowerPadding = missing - upperPadding
+        let empty = self.side(
+            "",
+            innerWidth: max(18, width - 4),
+            borderCode: selected ? "36" : "2",
+            useColor: useColor)
+        return [top]
+            + Array(repeating: empty, count: upperPadding)
+            + lines.dropFirst().dropLast()
+            + Array(repeating: empty, count: lowerPadding)
+            + [bottom]
+    }
+
+    private static func viewport(
+        lines: [String],
+        selectedLine: Int?,
+        width: Int,
+        height: Int) -> [String]
+    {
+        guard lines.count > height else { return lines }
+        let selected = selectedLine ?? 0
+        let start = min(max(0, selected - height / 2), max(0, lines.count - height))
+        let end = min(lines.count, start + height)
+        var visible = Array(lines[start..<end])
+        if start > 0 { visible[0] = self.fit("↑ more", width: width) }
+        if end < lines.count { visible[visible.count - 1] = self.fit("↓ more", width: width) }
+        return visible
+    }
+
+    private static func side(
+        _ content: String,
+        innerWidth: Int,
+        borderCode: String,
+        useColor: Bool,
+        dim: Bool = false,
+        metric: Double? = nil) -> String
+    {
+        let clipped = self.fit(content, width: innerWidth)
+        let padding = String(repeating: " ", count: max(0, innerWidth - self.visibleLength(clipped)))
+        let body: String = if let metric {
+            self.paint(clipped, code: self.metricCode(metric), enabled: useColor)
+        } else if dim {
+            self.paint(clipped, code: "2", enabled: useColor)
+        } else {
+            clipped
+        }
+        let border = self.paint("│", code: borderCode, enabled: useColor)
+        return "\(border) \(body)\(padding) \(border)"
+    }
+
+    private static func paired(_ left: String, _ right: String, width: Int) -> String {
+        let gap = max(1, width - self.visibleLength(left) - self.visibleLength(right))
+        return self.fit(left + String(repeating: " ", count: gap) + right, width: width)
+    }
+
+    private static func bar(remaining: Double, width: Int) -> String {
+        let filled = Int((max(0, min(100, remaining)) / 100 * Double(width)).rounded())
+        return "[" + String(repeating: "━", count: filled) + String(repeating: "─", count: max(0, width - filled)) + "]"
+    }
+
+    private static func percent(_ value: Double) -> String {
+        "\(Int(value.rounded()))% left"
+    }
+
+    private static func resetLabel(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: "⏳ ", with: "")
+            .replacingOccurrences(of: "Reset in ", with: "")
+            .replacingOccurrences(of: "Resets in ", with: "")
+            .replacingOccurrences(of: "Reset ", with: "")
+            .replacingOccurrences(of: "Resets ", with: "")
+    }
+
+    private static func freshness(_ date: Date?) -> String {
+        guard let date else { return "updated unknown" }
+        let seconds = max(0, Int(Date().timeIntervalSince(date)))
+        return switch seconds {
+        case 0..<10: "updated now"
+        case 10..<60: "updated \(seconds)s"
+        case 60..<3600: "updated \(seconds / 60)m"
+        default: "updated \(seconds / 3600)h"
+        }
+    }
+
+    private static func wrapped(_ value: String, width: Int) -> [String] {
+        guard value.count > width else { return [value] }
+        var lines: [String] = []
+        var current = ""
+        for word in value.split(separator: " ").map(String.init) {
+            let proposed = current.isEmpty ? word : current + " " + word
+            if proposed.count > width, !current.isEmpty {
+                lines.append(current)
+                current = word
+            } else {
+                current = proposed
+            }
+        }
+        if !current.isEmpty { lines.append(current) }
+        return lines
+    }
+
+    private static func pad(_ value: String, width: Int) -> String {
+        value + String(repeating: " ", count: max(0, width - self.visibleLength(value)))
     }
 
     private static func fit(_ value: String, width: Int) -> String {
-        let safeValue = self.safe(value)
-        guard safeValue.count > width else { return safeValue }
-        return String(safeValue.prefix(max(1, width - 1))) + "…"
+        let plain = self.safe(TextParsing.stripANSICodes(value))
+        guard plain.count > width else { return plain }
+        guard width > 1 else { return String(plain.prefix(max(0, width))) }
+        return String(plain.prefix(width - 1)) + "…"
+    }
+
+    private static func visibleLength(_ value: String) -> Int {
+        TextParsing.stripANSICodes(value).count
     }
 
     private static func safe(_ value: String) -> String {
@@ -220,20 +702,35 @@ enum CLITUIRenderer {
         })
     }
 
-    private static let controls = "j/k: select • f: provider focus • r: refresh • ?: help • q: quit"
+    private static func paint(_ value: String, code: String, enabled: Bool) -> String {
+        guard enabled else { return value }
+        return "\u{001B}[\(code)m\(value)\u{001B}[0m"
+    }
 
+    private static func metricCode(_ remaining: Double) -> String {
+        switch remaining {
+        case ..<20: "31"
+        case ..<50: "33"
+        default: "32"
+        }
+    }
+
+    private static let controls = "arrows: grid • j/k: next/previous • Enter: detail • f: focus • r: refresh • ?: help • q: quit"
+    private static let detailControls = "Esc: grid • j/k: previous/next provider • ↑/↓: scroll • r: refresh • q: quit"
     private static let helpText = [
         "Keyboard shortcuts",
         "",
-        "  j         Select next provider account",
-        "  k         Select previous provider account",
+        "  arrows    Move across the provider grid; in detail, scroll long provider data",
+        "  j / k     Select next / previous provider account",
+        "  Enter     Open provider detail",
+        "  Esc       Return from detail or help; exits from the overview",
         "  f         Show only the selected provider's accounts; press again for all providers",
-        "  r         Re-fetch selected providers using the existing configured sources",
+        "  r         Re-fetch using the existing configured provider sources",
         "  ?         Toggle this help",
-        "  q / Esc   Quit",
+        "  q         Quit",
         "",
-        "The TUI uses the same provider registry and fetch pipeline as `codexbar cards`.",
-        "It does not read provider credentials itself, and unavailable providers remain explicit failures.",
+        "The grid renders every provider-authentic quota window returned by the existing registry.",
+        "Failures remain visible and stale values are marked rather than presented as fresh.",
     ].joined(separator: "\n")
 }
 
@@ -346,23 +843,30 @@ extension CodexBarCLI {
         defer { terminal?.restore() }
         var showsHelp = false
         var isRefreshing = false
+        let useColor = Self.shouldUseColor(noColor: values.flags.contains("noColor"), format: .text)
 
         while true {
             guard let activeTerminal = terminal else { break }
+            let terminalWidth = CLICardsRenderer.terminalColumnCount()
+            let terminalHeight = CLICardsRenderer.terminalRowCount()
             activeTerminal.render(CLITUIRenderer.render(
                 state: state,
-                terminalWidth: CLICardsRenderer.terminalColumnCount(),
+                terminalWidth: terminalWidth,
+                terminalHeight: terminalHeight,
                 showsHelp: showsHelp,
-                isRefreshing: isRefreshing))
+                isRefreshing: isRefreshing,
+                useColor: useColor))
 
             let action = activeTerminal.readAction()
             if action == .refresh {
                 isRefreshing = true
                 activeTerminal.render(CLITUIRenderer.render(
                     state: state,
-                    terminalWidth: CLICardsRenderer.terminalColumnCount(),
+                    terminalWidth: terminalWidth,
+                    terminalHeight: terminalHeight,
                     showsHelp: showsHelp,
-                    isRefreshing: isRefreshing))
+                    isRefreshing: isRefreshing,
+                    useColor: useColor))
                 activeTerminal.restore()
                 let dashboard = await Self.fetchCardsDashboard(values)
                 state.replaceDashboard(dashboard)
@@ -378,7 +882,11 @@ extension CodexBarCLI {
                 showsHelp.toggle()
                 continue
             }
-            if state.apply(action) {
+            if showsHelp, action == .back {
+                showsHelp = false
+                continue
+            }
+            if state.apply(action, columns: CLITUIRenderer.columnCount(terminalWidth: terminalWidth)) {
                 activeTerminal.restore()
                 Self.exit(
                     code: state.exitCode,

@@ -69,6 +69,19 @@ struct CLICardsDashboard {
     let cards: [CLICardModel]
     let failures: [CLICardFailure]
     let exitCode: ExitCode
+    let providerOrder: [UsageProvider]
+
+    init(
+        cards: [CLICardModel],
+        failures: [CLICardFailure],
+        exitCode: ExitCode,
+        providerOrder: [UsageProvider] = [])
+    {
+        self.cards = cards
+        self.failures = failures
+        self.exitCode = exitCode
+        self.providerOrder = providerOrder
+    }
 }
 
 extension CodexBarCLI {
@@ -225,6 +238,10 @@ extension CodexBarCLI {
             failures.append(contentsOf: result.cardFailures)
         }
 
-        return CLICardsDashboard(cards: cards, failures: failures, exitCode: exitCode)
+        return CLICardsDashboard(
+            cards: cards,
+            failures: failures,
+            exitCode: exitCode,
+            providerOrder: providerList)
     }
 }

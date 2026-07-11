@@ -40,6 +40,34 @@ struct CLICardModel: Sendable, Equatable {
     let metrics: [CLICardMetric]
     let extraLines: [String]
     let statusLine: String?
+    let updatedAt: Date?
+    let dataConfidence: UsageDataConfidence
+
+    init(
+        provider: UsageProvider,
+        title: String,
+        sourceLabel: String,
+        planBadge: String?,
+        accountLine: String?,
+        infoLines: [String],
+        metrics: [CLICardMetric],
+        extraLines: [String],
+        statusLine: String?,
+        updatedAt: Date? = nil,
+        dataConfidence: UsageDataConfidence = .unknown)
+    {
+        self.provider = provider
+        self.title = title
+        self.sourceLabel = sourceLabel
+        self.planBadge = planBadge
+        self.accountLine = accountLine
+        self.infoLines = infoLines
+        self.metrics = metrics
+        self.extraLines = extraLines
+        self.statusLine = statusLine
+        self.updatedAt = updatedAt
+        self.dataConfidence = dataConfidence
+    }
 }
 
 struct CLICardFailure: Sendable, Equatable {
@@ -77,6 +105,22 @@ enum CLICardsRenderer {
             return value
         }
         return 80
+    }
+
+    static func terminalRowCount() -> Int {
+        if isatty(STDOUT_FILENO) == 1 {
+            var windowSize = winsize(ws_row: 0, ws_col: 0, ws_xpixel: 0, ws_ypixel: 0)
+            if ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &windowSize) == 0, windowSize.ws_row > 0 {
+                return Int(windowSize.ws_row)
+            }
+        }
+        if let rows = ProcessInfo.processInfo.environment["LINES"],
+           let value = Int(rows.trimmingCharacters(in: .whitespacesAndNewlines)),
+           value > 0
+        {
+            return value
+        }
+        return 24
     }
 
     private static func terminalColumnCountFromTTY(fileDescriptor: Int32 = STDOUT_FILENO) -> Int? {
@@ -143,7 +187,9 @@ enum CLICardsRenderer {
             infoLines: infoLines,
             metrics: metrics,
             extraLines: extraLines,
-            statusLine: statusLine)
+            statusLine: statusLine,
+            updatedAt: snapshot.updatedAt,
+            dataConfidence: snapshot.dataConfidence)
     }
 
     static func render(
