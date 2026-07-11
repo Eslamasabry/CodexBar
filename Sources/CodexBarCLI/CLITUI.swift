@@ -462,9 +462,10 @@ enum CLITUIRenderer {
             enabled: useColor)
         var lines = [top]
         let marker = selected ? "●" : " "
-        let plan = tile.card?.planBadge.map { " · \($0)" } ?? ""
+        let title = "\(marker) \(tile.title)"
+        let plan = tile.card?.planBadge ?? ""
         lines.append(self.side(
-            "\(marker) \(tile.title)\(plan)",
+            self.paired(title, plan, width: innerWidth),
             innerWidth: innerWidth,
             borderCode: borderCode,
             useColor: useColor))
@@ -473,7 +474,7 @@ enum CLITUIRenderer {
             let normalizedAccount = account.hasPrefix("@") ? String(account.dropFirst())
                 .trimmingCharacters(in: .whitespaces) : account
             lines.append(self.side(
-                "@ \(normalizedAccount)",
+                self.centered("@ \(normalizedAccount)", width: innerWidth),
                 innerWidth: innerWidth,
                 borderCode: borderCode,
                 useColor: useColor,
@@ -482,20 +483,31 @@ enum CLITUIRenderer {
 
         if let card = tile.card {
             for metric in card.metrics {
-                let reset = metric.resetText.map { "  \(self.resetLabel($0))" } ?? ""
-                let label = "\(metric.label)  \(self.percent(metric.remainingPercent))\(reset)"
+                let right = [self.percent(metric.remainingPercent), metric.resetText.map(self.resetLabel)]
+                    .compactMap(\.self)
+                    .joined(separator: "  ")
                 lines.append(self.side(
-                    label,
+                    self.paired(metric.label, right, width: innerWidth),
                     innerWidth: innerWidth,
                     borderCode: borderCode,
                     useColor: useColor,
                     metric: metric.remainingPercent))
+                lines.append(self.side(
+                    "",
+                    innerWidth: innerWidth,
+                    borderCode: borderCode,
+                    useColor: useColor))
                 lines.append(self.side(
                     self.bar(remaining: metric.remainingPercent, width: max(6, innerWidth - 2)),
                     innerWidth: innerWidth,
                     borderCode: borderCode,
                     useColor: useColor,
                     metric: metric.remainingPercent))
+                lines.append(self.side(
+                    "",
+                    innerWidth: innerWidth,
+                    borderCode: borderCode,
+                    useColor: useColor))
                 if detail, let detailText = metric.detailText {
                     lines.append(self.side(
                         detailText,
@@ -509,15 +521,14 @@ enum CLITUIRenderer {
             let support = card.infoLines + card.extraLines + (card.statusLine.map { [$0] } ?? [])
             for line in support {
                 lines.append(self.side(
-                    line,
+                    self.alignedInfo(line, width: innerWidth),
                     innerWidth: innerWidth,
                     borderCode: borderCode,
                     useColor: useColor,
                     dim: true))
             }
-            let source = "\(card.sourceLabel) • \(self.freshness(card.updatedAt))"
             lines.append(self.side(
-                source,
+                self.paired(card.sourceLabel, self.freshness(card.updatedAt), width: innerWidth),
                 innerWidth: innerWidth,
                 borderCode: borderCode,
                 useColor: useColor,
@@ -631,8 +642,24 @@ enum CLITUIRenderer {
     }
 
     private static func paired(_ left: String, _ right: String, width: Int) -> String {
+        guard !right.isEmpty else { return self.fit(left, width: width) }
         let gap = max(1, width - self.visibleLength(left) - self.visibleLength(right))
         return self.fit(left + String(repeating: " ", count: gap) + right, width: width)
+    }
+
+    private static func centered(_ value: String, width: Int) -> String {
+        let fitted = self.fit(value, width: width)
+        return String(repeating: " ", count: max(0, (width - self.visibleLength(fitted)) / 2)) + fitted
+    }
+
+    private static func alignedInfo(_ value: String, width: Int) -> String {
+        let plain = TextParsing.stripANSICodes(value)
+        let parts = plain.split(separator: ":", maxSplits: 1).map(String.init)
+        guard parts.count == 2 else { return self.fit(plain, width: width) }
+        return self.paired(
+            parts[0].trimmingCharacters(in: .whitespaces) + ":",
+            parts[1].trimmingCharacters(in: .whitespaces),
+            width: width)
     }
 
     private static func bar(remaining: Double, width: Int) -> String {
