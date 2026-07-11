@@ -434,7 +434,8 @@ struct TokenAccountCLIContext {
 
         if base == .auto {
             if routing.adminAPIKey != nil { return .api }
-            return routing.isOAuth ? .oauth : base
+            if routing.isOAuth || self.hasClaudeEnvironmentOAuthToken { return .oauth }
+            return base
         }
 
         guard base == .cli, account != nil else {
@@ -463,6 +464,13 @@ struct TokenAccountCLIContext {
 
     private func providerConfig(for provider: UsageProvider) -> ProviderConfig? {
         self.config.providerConfig(for: provider)
+    }
+
+    private var hasClaudeEnvironmentOAuthToken: Bool {
+        guard let token = self.baseEnvironment[ClaudeOAuthCredentialsStore.environmentTokenKey] else {
+            return false
+        }
+        return !token.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func codexAccountReconciler(activeSource: CodexActiveSource? = nil) -> DefaultCodexAccountReconciler {
