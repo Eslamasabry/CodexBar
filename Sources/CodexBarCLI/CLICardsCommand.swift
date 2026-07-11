@@ -65,8 +65,49 @@ struct CardsOptions: CommanderParsable {
     var brief: Bool = false
 }
 
+struct CLICardsDashboard {
+    let cards: [CLICardModel]
+    let failures: [CLICardFailure]
+    let exitCode: ExitCode
+}
+
 extension CodexBarCLI {
     static func runCards(_ values: ParsedValues) async {
+        let dashboard = await self.fetchCardsDashboard(values)
+        let output = CLIOutputPreferences.from(values: values)
+        let noColor = values.flags.contains("noColor")
+        let useColor = Self.shouldUseColor(noColor: noColor, format: .text)
+        let brief = values.flags.contains("brief")
+
+        let rendered: String
+        let enhanced = CLITerminalCapabilities.supportsEnhancedCards(useColor: useColor)
+        if brief {
+            let rows = CLICardsBriefRenderer.makeRows(cards: dashboard.cards)
+            rendered = CLICardsBriefRenderer.render(
+                rows: rows,
+                failures: dashboard.failures,
+                terminalWidth: CLICardsRenderer.terminalColumnCount(),
+                useColor: useColor,
+                enhanced: enhanced)
+        } else {
+            rendered = CLICardsRenderer.render(
+                cards: dashboard.cards,
+                failures: dashboard.failures,
+                terminalWidth: CLICardsRenderer.terminalColumnCount(),
+                useColor: useColor,
+                enhanced: enhanced)
+        }
+        if !rendered.isEmpty {
+            print(rendered)
+        }
+
+        Self.exit(
+            code: dashboard.exitCode,
+            output: output,
+            kind: dashboard.exitCode == .success ? .runtime : .provider)
+    }
+
+    static func fetchCardsDashboard(_ values: ParsedValues) async -> CLICardsDashboard {
         let output = CLIOutputPreferences.from(values: values)
         let config = Self.loadConfig(output: output)
         let provider = Self.decodeProvider(from: values, config: config)
@@ -93,7 +134,6 @@ extension CodexBarCLI {
         let verbose = values.flags.contains("verbose")
         let noColor = values.flags.contains("noColor")
         let useColor = Self.shouldUseColor(noColor: noColor, format: .text)
-        let brief = values.flags.contains("brief")
         let resetStyle = Self.resetTimeDisplayStyleFromDefaults()
         let weeklyWorkDays = Self.weeklyProgressWorkDaysFromDefaults()
         let providerList = provider.asList
@@ -185,28 +225,6 @@ extension CodexBarCLI {
             failures.append(contentsOf: result.cardFailures)
         }
 
-        let rendered: String
-        let enhanced = CLITerminalCapabilities.supportsEnhancedCards(useColor: useColor)
-        if brief {
-            let rows = CLICardsBriefRenderer.makeRows(cards: cards)
-            rendered = CLICardsBriefRenderer.render(
-                rows: rows,
-                failures: failures,
-                terminalWidth: CLICardsRenderer.terminalColumnCount(),
-                useColor: useColor,
-                enhanced: enhanced)
-        } else {
-            rendered = CLICardsRenderer.render(
-                cards: cards,
-                failures: failures,
-                terminalWidth: CLICardsRenderer.terminalColumnCount(),
-                useColor: useColor,
-                enhanced: enhanced)
-        }
-        if !rendered.isEmpty {
-            print(rendered)
-        }
-
-        Self.exit(code: exitCode, output: output, kind: exitCode == .success ? .runtime : .provider)
+        return CLICardsDashboard(cards: cards, failures: failures, exitCode: exitCode)
     }
 }

@@ -11,7 +11,7 @@ read_when:
 - `Sources/CodexBarCore`: fetch + parse (Codex RPC, PTY runner, Claude probes, OpenAI web scraping, status polling).
 - `Sources/CodexBar`: state + UI (UsageStore, SettingsStore, StatusItemController, menus, icon rendering).
 - `Sources/CodexBarWidget`: WidgetKit extension wired to the shared snapshot.
-- `Sources/CodexBarCLI`: bundled CLI for `codexbar` usage/status output.
+- `Sources/CodexBarCLI`: bundled CLI for usage/status output, one-shot terminal cards, and the interactive all-provider TUI.
 - `Sources/CodexBarClaudeWatchdog`: helper process for stable Claude CLI PTY sessions.
 - `Sources/CodexBarClaudeWebProbe`: CLI helper to diagnose Claude web fetches.
 
@@ -21,6 +21,8 @@ read_when:
 
 ## Data flow
 - Background refresh → `UsageFetcher`/provider probes → `UsageStore` → menu/icon/widgets.
+- CLI/TUI refresh → the same provider registry and `UsageCommandContext` → terminal projection. The TUI never owns a
+  provider source, credential, or parser.
 - Settings toggles feed `SettingsStore` → `UsageStore` refresh cadence + feature flags.
 
 ## Concurrency & platform
