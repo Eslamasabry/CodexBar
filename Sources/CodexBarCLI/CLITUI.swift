@@ -19,6 +19,34 @@ enum CLITUIAction: Equatable {
     case none
 }
 
+enum CLITUIKeyDecoder {
+    static func action(firstByte: UInt8, escapeBytes: [UInt8] = []) -> CLITUIAction {
+        switch firstByte {
+        case 3, 113:
+            return .quit
+        case 106:
+            return .next
+        case 107:
+            return .previous
+        case 114:
+            return .refresh
+        case 102:
+            return .toggleProviderFocus
+        case 63:
+            return .toggleHelp
+        case 27:
+            guard escapeBytes.count == 2, escapeBytes[0] == 91 else { return .quit }
+            return switch escapeBytes[1] {
+            case 65: .previous
+            case 66: .next
+            default: .none
+            }
+        default:
+            return .none
+        }
+    }
+}
+
 struct CLITUIState {
     private(set) var cards: [CLICardModel]
     private(set) var failures: [CLICardFailure]
@@ -250,27 +278,15 @@ final class CLIRawTerminal {
     }
 
     func readAction() -> CLITUIAction {
-        var byte: UInt8 = 0
-        let readCount = withUnsafeMutableBytes(of: &byte) { buffer in
-            read(STDIN_FILENO, buffer.baseAddress, 1)
+        guard let firstByte = self.readByte() else { return .quit }
+        guard firstByte == 27 else {
+            return CLITUIKeyDecoder.action(firstByte: firstByte)
         }
-        guard readCount == 1 else { return .quit }
-        switch byte {
-        case 3, 27, 113:
-            return .quit
-        case 106:
-            return .next
-        case 107:
-            return .previous
-        case 114:
-            return .refresh
-        case 102:
-            return .toggleProviderFocus
-        case 63:
-            return .toggleHelp
-        default:
-            return .none
-        }
+        let escapeBytes = [
+            self.readByte(timeoutMilliseconds: 25),
+            self.readByte(timeoutMilliseconds: 25),
+        ].compactMap(\.self)
+        return CLITUIKeyDecoder.action(firstByte: firstByte, escapeBytes: escapeBytes)
     }
 
     func restore() {
@@ -285,6 +301,18 @@ final class CLIRawTerminal {
     private func write(_ value: String) {
         guard let data = value.data(using: .utf8) else { return }
         FileHandle.standardOutput.write(data)
+    }
+
+    private func readByte(timeoutMilliseconds: Int32? = nil) -> UInt8? {
+        if let timeoutMilliseconds {
+            var descriptor = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+            guard poll(&descriptor, 1, timeoutMilliseconds) > 0 else { return nil }
+        }
+        var byte: UInt8 = 0
+        let readCount = withUnsafeMutableBytes(of: &byte) { buffer in
+            read(STDIN_FILENO, buffer.baseAddress, 1)
+        }
+        return readCount == 1 ? byte : nil
     }
 }
 

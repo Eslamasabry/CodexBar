@@ -4,6 +4,13 @@ import Testing
 
 struct CLITUITests {
     @Test
+    func `decodes terminal arrows without treating them as quit`() {
+        #expect(CLITUIKeyDecoder.action(firstByte: 27, escapeBytes: [91, 65]) == .previous)
+        #expect(CLITUIKeyDecoder.action(firstByte: 27, escapeBytes: [91, 66]) == .next)
+        #expect(CLITUIKeyDecoder.action(firstByte: 27) == .quit)
+    }
+
+    @Test
     func `moves through every provider card and can focus one provider`() {
         var state = CLITUIState(dashboard: self.dashboard())
 
