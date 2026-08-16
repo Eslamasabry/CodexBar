@@ -40,6 +40,8 @@ enum CodexBarCLI {
                 }
                 defer { signalMonitor.cancel() }
                 await self.runCards(invocation.parsedValues)
+            case ["tui"]:
+                await self.runTUI(invocation.parsedValues)
             case ["usage"]:
                 let signalMonitor = CLITerminationSignalMonitor { signalNumber in
                     CLITerminationSignalMonitor.terminateActiveHelpersAndReraise(signalNumber)
@@ -105,6 +107,11 @@ enum CodexBarCLI {
             CommandDescriptor(
                 name: "cards",
                 abstract: "Print usage as a terminal card grid",
+                discussion: nil,
+                signature: cardsSignature),
+            CommandDescriptor(
+                name: "tui",
+                abstract: "Browse usage cards interactively in the terminal",
                 discussion: nil,
                 signature: cardsSignature),
             CommandDescriptor(

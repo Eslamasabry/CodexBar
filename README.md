@@ -151,6 +151,7 @@ show an incident indicator.
 - Display controls for provider icons, labels, bars, reset-time style, and highest-usage auto-selection.
 - Refresh cadence presets (manual, 1m, 2m, 5m, 15m).
 - Bundled CLI (`codexbar`) for scripts and CI (including `codexbar cost --provider codex`, `claude`, or `both` for local cost usage); macOS and Linux CLI builds available.
+- Interactive all-provider terminal dashboard: `codexbar tui` reuses the existing provider registry and shows source, freshness, account-aware detail, and partial failures without a separate credential path.
 - WidgetKit widgets for supported providers.
 - Localized app and website with a shared 21-language catalog, automatic website detection, persistent pickers, and RTL support.
 - Optional session quota notifications and weekly-reset confetti.
@@ -186,6 +187,8 @@ Wondering if CodexBar scans your disk? It doesn’t crawl your filesystem; it re
 - Issue labeling guide: [docs/ISSUE_LABELING.md](docs/ISSUE_LABELING.md)
 - UI & icon notes: [docs/ui.md](docs/ui.md)
 - CLI reference: [docs/cli.md](docs/cli.md)
+- Cross-platform structure: [docs/monorepo/README.md](docs/monorepo/README.md)
+- Portable design system: [docs/design/DESIGN-SYSTEM.md](docs/design/DESIGN-SYSTEM.md)
 - Configuration: [docs/configuration.md](docs/configuration.md)
 - Keychain prompts: [docs/keychain-prompts.md](docs/keychain-prompts.md)
 - CLI configuration: [docs/cli-configuration.md](docs/cli-configuration.md)

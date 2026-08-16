@@ -27,6 +27,8 @@ extension CodexBarCLI {
         switch command {
         case "cards":
             print(Self.cardsHelp(version: version))
+        case "tui":
+            print(Self.tuiHelp(version: version))
         case "usage":
             print(Self.usageHelp(version: version))
         case "cost":

@@ -2,6 +2,28 @@ import CodexBarCore
 import Foundation
 
 extension CodexBarCLI {
+    static func tuiHelp(version: String) -> String {
+        """
+        CodexBar \(version)
+
+        Usage:
+          codexbar tui [same provider, account, source, and status flags as codexbar cards]
+
+        Description:
+          Open an interactive, read-only usage dashboard for every selected provider and account.
+          Requires an interactive terminal. Use j/k to select a card, f to focus
+          the selected provider, r to refresh, ? for shortcuts, and q to quit.
+          Reuses the existing provider registry and fetch pipeline; no provider credentials are
+          stored or changed by this command.
+
+        Examples:
+          codexbar tui
+          codexbar tui --provider all --status
+          codexbar tui --provider claude --all-accounts
+          codexbar tui --no-color
+        """
+    }
+
     static func cardsHelp(version: String) -> String {
         """
         CodexBar \(version)
@@ -270,6 +292,7 @@ extension CodexBarCLI {
                   [--no-credits] [--no-color] [--pretty] [--status] [--source <auto|web|cli|oauth|api>]
                   [--web-timeout <seconds>] [--web-debug-dump-html] [--antigravity-plan-debug] [--augment-debug]
           codexbar cards [--provider \(ProviderHelp.list)] [--brief] [--no-color] [--status]
+          codexbar tui [--provider \(ProviderHelp.list)] [--no-color] [--status]
           codexbar cost [--format text|json]
                        [--json]
                        [--json-only]
@@ -310,6 +333,7 @@ extension CodexBarCLI {
           codexbar --provider gemini
           codexbar cards --provider all --status
           codexbar cards --brief
+          codexbar tui --provider all --status
           codexbar cost --provider claude --format json --pretty
           codexbar sessions --json
           codexbar serve --port 8080

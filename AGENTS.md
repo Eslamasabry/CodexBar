@@ -46,3 +46,22 @@
 - Keep provider data siloed: when rendering usage or account info for a provider (Claude vs Codex), never display identity/plan fields sourced from a different provider.***
 - Claude CLI status line is custom + user-configurable; never rely on it for usage parsing.
 - Cookie imports: default Chrome-only when possible to avoid other browser prompts; override via browser list when needed.
+
+## Cross-platform Monorepo Rules
+- Preserve `Sources/`, `Tests/`, `TestsLinux/`, and `Package.swift` as the upstream Swift package. Do not move or rename
+  them to make the repository look like a conventional monorepo; that would make upstream merges needlessly expensive.
+- New platform products belong in `apps/`; reusable, platform-neutral contracts belong in `packages/`; thin desktop
+  consumers belong in `integrations/`. Each product must consume a shared contract or the existing CLI JSON surface,
+  never reimplement provider authentication or parsing.
+- The Linux TUI must use every provider returned by the existing registry and preserve provider-specific windows,
+  balances, source labels, account identity, freshness, and failures. Never hard-code a Codex/Claude-only dashboard.
+- Android is a future paired companion. It must not receive provider cookies, OAuth tokens, API keys, prompt content,
+  terminal scrollback, repository paths, or browser databases.
+- Keep public interfaces additive and versioned. Existing `codexbar usage`, `cards`, JSON output, and localhost server
+  behavior remain script-compatible unless an explicit migration note and compatibility test are added.
+- Design and copy must follow `docs/design/DESIGN-SYSTEM.md`; privacy, safety, and anti-abuse decisions must follow
+  `docs/governance/ETHICS.md` and `docs/governance/SECURITY-AND-PRIVACY.md`.
+- Never add telemetry, crash reporting, a cloud relay, or account-sharing/limit-evasion behavior without an explicit,
+  separately approved product decision. Local diagnostics must redact credentials and provider identity by default.
+- Do not use generated placeholder UIs or fake quota data in shipped code. Test fixtures must be visibly synthetic and
+  must never contain real account identifiers, tokens, cookies, prompts, paths, or unpublished provider details.

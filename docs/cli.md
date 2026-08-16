@@ -57,6 +57,14 @@ See `docs/configuration.md` for the schema.
   - Kitty, Ghostty, WezTerm, and other truecolor terminals auto-enable enhanced gradients/outlines.
   - Force enhanced mode elsewhere with `CODEXBAR_CARDS_ENHANCED=1`.
   - Exit code is non-zero when any provider fetch fails.
+- `codexbar tui` opens an interactive all-provider terminal dashboard.
+  - Reuses the exact `cards` provider registry, source, account, credits, and status options; it adds no provider
+    allowlist, authentication path, or credential storage.
+  - The overview keeps every returned provider/account comparable; `j`/`k` select a detail card, `f` focuses the
+    selected provider's accounts, `r` refreshes, `?` shows shortcuts, and `q` exits.
+  - It requires an interactive terminal. Use `codexbar cards` for scripts, SSH commands without a TTY, and snapshots.
+  - Provider failures remain visible alongside healthy cards. A refresh temporarily restores normal terminal mode so
+    invalid config/source errors cannot leave the user with a broken terminal.
 - `codexbar serve` starts a foreground localhost-only HTTP server for usage and cost JSON.
   - `--port <port>` defaults to `8080`.
   - `--refresh-interval <seconds>` defaults to `60` and controls the in-memory response cache TTL.
